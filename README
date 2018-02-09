@@ -1,0 +1,234 @@
+[==[ Albert patches to lpeg 1.0.1 ]==]
+
+[=[ P(patt) / -num ]=]
+
+-- -num is treated as -num + (captures + 1), so -1 = last capture
+-- can now return result of greedy search, without helper func
+-- example: locate index of last %d+
+
+=re.match(t, "(g <- {}%d+ / .%D* g)+")
+1   3   5   7       -- numbers positions
+=re.match(t, "(g <- {}%d+ / .%D* g)+ -> -1")
+7                   -- last capture only
+=re.match(t, "(%D* {} .%d*)+ -> -1")
+7                   -- more efficient pat
+
+[=[ lpeg.pcode and lpeg.ptree show hex in '\xXX' ]=]
+
+-- so lua understand it, ok to copy/paste
+-- speed up string.match with pre-built class (if needed)
+=ptree( re.compile "[^%a\x00]" )
+[]
+set[\x01-\x40\x5b-\x60\x7b-\xff]
+=('%q'):format "[\x01-\x40\x5b-\x60\x7b-\xff]"
+"[\x01-@[-`{- ]"    -- i patched lua to ALWAYS use \xNN
+
+[=[ lpeg.H(patt) ]=]
+
+-- lpeg.H(patt) = set of patt head-chars
+-- for efficient search of patt anywhere (forward)
+-- by skipping all non-head-chars during search.
+-- (first byte is also skipped because of no-match)
+
+    skip = P(1) * (1 - lpeg.H(patt))^0
+
+-- H recursive search inside lpeg tree structure for head chars
+-- patt = P'hi' + ('Hello' + S'wW' * 'orld') + Cp() * 'HI'
+-- H(patt) -> S'HWhw'
+
+-- negation and behind assertion does not have non-head chars to skip
+-- e.g. H(-P'hi')           -- can only skip word "hi"
+--> skip = P(1) * P''       -- equate this with skip formula
+--> H(-P'hi') = P(1)        -- signal for no optimized skip
+
+    H(-patt) = H(B(patt)) = P(1)
+
+[=[ lpeg.B(-patt) ]=]
+
+-- lpeg.B(-patt) = behind( fixedlen(patt) )
+-- fixedlen = 0 to 255
+-- B allow captures (even if not, can rewrite as below)
+
+    B(patt) = B(-patt) * patt
+
+[=[ re.lua ]=]
+
+    %b = lpeg.B(-1), optimize %b^n = Behind n
+    '@' = lpeg.B, note : "@!.^n" == "%b^n"
+    '>' = lpeg.M lua function, build by using lpeg.H
+    '~>' = lpeg.Cf (folding capture)
+    fix bug: Class to always return lpeg object
+    fix bug: defined to always return lpeg object
+    support for P(patt) / [+-]%d+
+    re.split(sep, elem) return lpeg split pattern
+    build lpeg.M(pat, skip) for anywhere search (see EXAMPLES)
+    
+WARNING: 
+    lpeg think %b is a real char, so watch out for infinite loops
+    Example: (P(1) * B(-1))^0
+
+[=[ lpeg.B(-patt) effect on capture ]=]
+
+=re.match('123456789', ".. { {...} %b^4 {...} }")
+34      345     234
+    PATCH: fixedlen(%b)=-1, thus above fixedlen = 2, 3, 3
+    2 = 3 - 4 + 3 = -1 + 3 (-1 cannot be used to return variable length)
+    fixedlen() return INT32_MIN for variable length
+
+=re.match('123456789', ".. {~ {...} %b^4 {...} ~}")
+345234
+    PATCH: substcap skip text with len <= 0 (skipped %b^4)
+    return "345" .. "234" = "345234"
+
+=re.match('123456789', ".. {%b ...}")
+34
+    will not capture "234", because substring = "3456789"
+    fixedlen = 3-1 = 2, so captured "34"
+
+=re.match('123456789', ".. {@. ..}")
+34
+    also capture "34", since %b. = @. = lpeg.B(1)
+    both pattern are the same, with same pcode
+
+t = 'this and that'
+pat = re.compile "{.* (g <- 'and' / %b g)}"
+
+=pat:match(t)       -- greedy search for "(.*and)"
+this and            -- position after match = 9
+
+=#t:sub(12), #pat:match(t, 12)
+2       253
+    captured len = 9-12 = -3, (byte) -3 = 0xfd = 253
+    253 is wrong, what should it captured ?
+
+=#pat:match(t, 12)  -- after patched lpvm.c match()
+0
+    should not be nil, because nil = failure
+    should not capture anything, beause len = -3
+    return "", same behavior as {~ ~}
+
+-- match-time capture (lpeg.Cmt):
+-- note: added optional defs in re.match for trying things (no memoize)
+
+=re.match(t, "(g <- 'and' / %b g) => print", -1, _G)
+this and that   9   -- 3 returns (not 2), captured ""
+nil
+=re.match('xandy', "(g <- 'and' / %b g) => print", -4, _G)
+xandy   5   and     -- this showned capture is working
+nil
+    PATCH: lpcap.c pushnestedvalues() for implicit capture
+    NOTE: =>,~>,-> has VERY HIGH precedence, so ALWAYS use ()
+
+[==[ EXAMPLES ]==]
+
+[=[ re.split(sep, elem) ]=]
+
+t = "1 2 3 123   go"
+=re.match(t, re.split())            -- default: sep=%s, non-empty elem
+1       2       3       123     go
+=re.match(t, re.split(nil, ''))     -- empty elem ok -> 7 elems, not 5
+1       2       3       123                     go
+=re.match(t, re.split("[1%s]"))     -- 1 also a sep char, now 4 elems
+2       3       23      go
+=re.match('hello', re.split(''))    -- empty separtor, split by chars
+h       e       l       l       o
+=table.concat( re.split(''):Ct():match "hello" )
+hello                               -- split chars in table -> concat
+
+[=[ reversing string ]=]
+
+rev0 = re.compile[[ R <- (!.) -> '' / ({.}R) -> '%2%1' ]]
+=rev0:match "123456789" --> 987654321
+    this is from lpeg re reference page
+    due to recursive calls, this is slow
+    possibly overflow backtrack stack for long string
+
+rev1 = re.compile[[ .* {~ (@{.} %b)* ~} ]]
+=rev1:match "123456789" --> 987654321
+    this pattern is tail recursive and fast
+    {~ ~} simply concatenate all captures
+
+[=[ lua pattern "(.*)and(.*)" ]=]
+
+-- this is the pattern that started all my patches ...
+-- it were hard because lpeg greedy match is possessive
+-- and if always check 'and' for match, it turned non-greedy
+--> trick is to repeat non-greedy matches until no more 'and'
+
+pat1 = re.compile "{(g <- 'and' / .[^a]* g)+ %b^3} .^3 {.*}"
+    -- performance is pretty good (beat string.match w/ long string)
+    -- can control which 'and' to get by changing '+'
+    -- if %b is unavailable, just use string.sub to chop the string
+
+pat2 = re.compile "{ .* %b^3 (g <- &'and' / %b g)} .^3 {.*}"
+    -- true greedy, stop after the first 'and'
+    -- performance is good if 'and' is close to the end
+    -- overall, pat1 is better, with consistent performance
+
+pat3 = re.compile("{(>%sep)+ @!%sep} %sep {.*}", {sep = 'and'})
+    -- this use my '>' operator for forward match
+    -- @!%sep undo last captured %sep (if %sep has fixedlen)
+    -- more general than pat1, no hard-coded %b^3 and .^3
+    -- performance just as good as pat1
+
+pat4 = re.compile("{>&%sep (%sep >&%sep)*} %sep {.*}", {sep = 'and'})
+    -- i got the idea from string.match frontier pattern
+    -- %sep can be variable length, say %A+
+    -- almost as fast as pat3, and does not need a patched lpeg.dll
+    -- just search/replace ">&'and'" with "(g <- &'and' / .[^a]* g)"
+
+[=[ regex: Look for a number = "^[+-]?%d+" or "%s[+-]?%d+" ]=]
+
+pat0 = re.compile [[ %s* (g <- {[+-]? %d+} / .%S* .%s* g) ]]
+    -- both [+-] and %d is subset of %S, so frontier %S idea work
+    -- problem is, there may be many of them
+    -- above is possibly the best lpeg can do
+
+pat1 = re.compile [[
+    parse  <- number / .%D* search  -- number or skip to %d+
+    number <- %s* { [+-]? %d+ }     -- number up front
+    search <- %b (%s / [+-] %b^2%s) -- validate pattern
+              {.%d*}                -- if valid, capture number
+    / .%d* .%D* search              -- else, try next %d+
+]]
+    -- with front number checked, lookbehind will not fail
+    -- (adding a space in front of string also work)
+    -- go STRAIGHT for the digits, then validate (Python style)
+    -- if no digits, will skip the whole line FAST
+    -- this is what people do: scan for digits, not spaces
+
+[=[ efficient search w/ lpeg.M (in re.lua) ]=]
+
+t = 'this and that and whatever'    -- timing w/ debug lpeg version
+
+-- example: search lpeg.P'whatever'
+=timer(1e6, lpeg.match, re.compile[[g <- 'whatever' / .g]], t)
+5548    27  -- the safe way
+=timer(1e6, lpeg.match, re.compile[[>'whatever']], t)
+3255    27  -- more elegant, and faster
+=timer(1e6, lpeg.match, lpeg.M'whatever', t)
+3255    27  -- same as above
+
+-- example: serach lpeg.P(4) * 'ever'
+=timer(1e6, lpeg.match, re.compile[[g <- (.... 'ever') / .g]], t)
+10725   27  -- note: can only skip 1 byte at a time
+=timer(1e6, lpeg.match, re.compile[[>(.... 'ever')]], t)
+11787   27  -- skip = P(1)*(S'')^0, thus slower
+=timer(1e6, lpeg.match, M(P(4) * 'ever', 1), t)
+10726   27  -- set skip = 1 -> now same as the recursive version
+
+-- above naive search does not allow '>' to optimize
+=timer(1e6, lpeg.match, re.compile[[>('r' @(.... 'ever'))]], t)
+3445    27  -- MUCH better, now '>' have 'r' to optimize
+=timer(1e6, lpeg.match, M(P'r' * B(P(4) * 'ever')), t)
+3445    27  -- same as above
+
+-- lpeg.M really can search anywhere, even backward !
+
+pat0 = re.compile("{ .* %b^3 (g <- &'and' / %b g)}")
+=pat0:match(t)  -- lua pattern "(.*)and"
+this and that
+
+pat1 = C(P(1)^0 * B(-3) * M(#P'and', B(-1)))
+    -- set skip = B(-1), same as pat0
+
