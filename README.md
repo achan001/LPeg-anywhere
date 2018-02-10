@@ -7,9 +7,7 @@ match anywhere, even backwards (see **README** for details)
 
 **lpeg.H(patt)** return a set of head-chars, useful for optimized search  
   
-**lpeg.M(patt, skip)** (a lua function) that can match anywhere **FAST**  
--- **lpeg.M** now reside in **re.lua**, but I really like it stay in lpeg C source.  
--- if anyone can make **lpeg.M** in C, please let me know ...  
+**lpeg.M(patt, skip)** (lua function in **re.lua**) that can match anywhere **FAST**  
   
 **Example:**  
   
