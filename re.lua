@@ -197,7 +197,7 @@ local function match (s, p, i, def) -- def -> no memoize
   local cp = mem[p]
   if cp == nil then
     cp = compile(p)
-    if p ~= cp then mem[p] = cp end
+    mem[p] = cp
   end
   return m.match(cp, s, i or 1)
 end
