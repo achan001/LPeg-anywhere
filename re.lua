@@ -233,7 +233,7 @@ local re = {
   match = match,
   find = find,
   gsub = gsub,
-  defined = Predef,
+  def = Predef,
   updatelocale = updatelocale,
 }
 
