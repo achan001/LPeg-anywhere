@@ -5,7 +5,7 @@ match anywhere, even backwards (see **README** for details)
 **lpeg.B(-n)** move back n bytes   
 **lpeg.B(-patt)** move back fixedlen(patt)  
 
-**lpeg.H(patt)** return a set of head-chars, useful for optimized search  
+**lpeg.N(patt)** return a set of non-head-chars, useful for optimized search  
   
 **lpeg.M(patt, skip)** (lua function in **re.lua**) that can match anywhere **FAST**  
   
