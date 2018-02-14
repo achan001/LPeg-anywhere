@@ -8,14 +8,20 @@ match anywhere, even backwards (see **README** for details)
 **lpeg.N(patt)** return a set of non-head-chars, useful for optimized search  
   
 **lpeg.M(patt, skip)** (lua function in **re.lua**) that can match anywhere **FAST**  
+   
+**Example:**  return 2 captures ". -and(. *)" and ". *and(. *)"  
+t = "this and that and this and more"  
   
-**Example:**  
+-- Using **lpeg**:  
+all = lpeg.C(lpeg.P(1)^0)  
+pat = lpeg.M('and') * all * lpeg.M('and', lpeg.B(-1)) * all  
   
-t = "this and that and whatever"  
-= **lpeg.M**('whatever'):match(t)  
-27  -- match *forward* to end-of-string  
+= lpeg.match(pat, t)  
+ that and this and more       more  
   
-= lpeg.match(**lpeg.M**('that', lpeg.B(-1)), t, -1)  
-14  -- match *backward* from last byte of t (the 'r')     
-
-
+-- Using **lpeg re**:  
+-- For convenience, re.lua added '>' and '<' *prefix* for forward and backward match:  
+  
+= re.match(t, ">'and' {. *} <'and' {. *}")  
+ that and this and more       more  
+ 
